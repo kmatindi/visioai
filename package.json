@@ -1,0 +1,19 @@
+{
+  "name": "visioai",
+  "version": "1.0.0",
+  "description": "VisioAI — Full-stack AI video creation platform",
+  "private": true,
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev --workspace=backend\" \"npm run dev --workspace=frontend\"",
+    "build": "npm run build --workspace=frontend",
+    "start": "npm start --workspace=backend"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "playwright": "^1.60.0"
+  }
+}
