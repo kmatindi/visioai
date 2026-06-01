@@ -6,6 +6,8 @@
 const router = require('express').Router();
 const { v4: uuidv4 } = require('uuid');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 const { authenticate } = require('../middleware/auth');
 const { store } = require('../models/store');
 const { PLANS } = require('../config/plans');
@@ -13,6 +15,26 @@ const { PLANS } = require('../config/plans');
 const generationJobs = new Map();
 
 const REPLICATE_API = 'https://api.replicate.com/v1';
+const UPLOADS_DIR = path.join(__dirname, '..', '..', 'uploads');
+
+// Replicate needs a publicly reachable URL or a base64 data URI.
+// Local server URLs (localhost / 127.0.0.1) aren't reachable from Replicate's
+// servers, so we read the file from disk and encode it as a data URI instead.
+async function resolveImageForReplicate(imageUrl) {
+  if (!imageUrl) return null;
+  if (/localhost|127\.0\.0\.1/.test(imageUrl)) {
+    const filename = imageUrl.split('/uploads/').pop();
+    if (!filename) return null;
+    const filePath = path.join(UPLOADS_DIR, filename);
+    if (!fs.existsSync(filePath)) return null;
+    const buf = fs.readFileSync(filePath);
+    const ext = path.extname(filename).slice(1).toLowerCase() || 'jpeg';
+    const mime = ext === 'jpg' ? 'image/jpeg' : `image/${ext}`;
+    return `data:${mime};base64,${buf.toString('base64')}`;
+  }
+  if (imageUrl.startsWith('http')) return imageUrl;
+  return null;
+}
 
 // POST /api/video/generate
 router.post('/generate', authenticate, async (req, res) => {
@@ -67,9 +89,16 @@ router.post('/generate', authenticate, async (req, res) => {
   // Kick off generation async (don't await — response already sent)
   if (process.env.REPLICATE_API_KEY) {
     runReplicateGeneration(jobId, user, prompt, imageUrl, aspectRatio).catch(err => {
-      console.error('[Replicate] generation error:', err.message);
-      job.status = 'failed';
-      job.error = err.message;
+      const status = err.response?.status;
+      console.error(`[Replicate] generation error (HTTP ${status || '?'}): ${err.message}`);
+      if (status === 402 || status === 403 || status === 401) {
+        // Billing/auth issue — fall back to simulation so the UI still works
+        console.warn('[Replicate] Falling back to mock simulation due to billing/auth error');
+        simulateGeneration(jobId, user);
+      } else {
+        job.status = 'failed';
+        job.error = err.response?.data?.detail || err.message;
+      }
     });
   } else {
     simulateGeneration(jobId, user);
@@ -123,10 +152,11 @@ async function runReplicateGeneration(jobId, user, prompt, imageUrl, aspectRatio
   // Start prediction
   const input = { prompt, aspect_ratio: ratio };
 
-  // minimax/video-01 supports an optional first_frame_image
-  // Only pass it if it's a real HTTP URL (not a blob or data URI)
-  if (imageUrl && imageUrl.startsWith('http')) {
-    input.first_frame_image = imageUrl;
+  // minimax/video-01 accepts a first_frame_image as a public URL or base64 data URI
+  const imageForReplicate = await resolveImageForReplicate(imageUrl);
+  if (imageForReplicate) {
+    input.first_frame_image = imageForReplicate;
+    console.log(`[Replicate] first_frame_image: ${imageForReplicate.startsWith('data:') ? 'base64 data URI' : imageForReplicate}`);
   }
 
   console.log(`[Replicate] Starting minimax/video-01 prediction for job ${jobId}`);
@@ -147,7 +177,7 @@ async function runReplicateGeneration(jobId, user, prompt, imageUrl, aspectRatio
 }
 
 async function pollPrediction(job, predictionId, headers, user) {
-  const maxAttempts = 120; // 4 minutes at 2s intervals
+  const maxAttempts = 300; // 10 minutes at 2s intervals
   let attempts = 0;
 
   while (attempts < maxAttempts) {

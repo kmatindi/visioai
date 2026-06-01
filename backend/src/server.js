@@ -13,6 +13,7 @@ const videoRoutes = require('./routes/video');
 const voiceRoutes = require('./routes/voice');
 const musicRoutes = require('./routes/music');
 const exportRoutes = require('./routes/export');
+const uploadRoutes = require('./routes/upload');
 const analyticsRoutes = require('./routes/analytics');
 const marketplaceRoutes = require('./routes/marketplace');
 const userRoutes = require('./routes/users');
@@ -27,11 +28,12 @@ app.use(cors({
   credentials: true,
 }));
 
-// Rate limiting
+// Rate limiting — generous in dev; tighten via env vars in production
 const limiter = rateLimit({
   windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS) || 15 * 60 * 1000,
-  max: parseInt(process.env.RATE_LIMIT_MAX) || 100,
+  max: parseInt(process.env.RATE_LIMIT_MAX) || (process.env.NODE_ENV === 'production' ? 100 : 2000),
   message: { error: 'Too many requests, please try again later.' },
+  skip: (req) => req.path.startsWith('/video/status/'), // status polls never rate-limited
 });
 app.use('/api/', limiter);
 
@@ -61,6 +63,7 @@ app.use('/api/video', videoRoutes);
 app.use('/api/voice', voiceRoutes);
 app.use('/api/music', musicRoutes);
 app.use('/api/export', exportRoutes);
+app.use('/api/upload', uploadRoutes);
 app.use('/api/analytics', analyticsRoutes);
 app.use('/api/marketplace', marketplaceRoutes);
 

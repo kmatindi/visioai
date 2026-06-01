@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import AppLayout from '../components/layout/AppLayout';
-import { aiDirectorAPI, videoAPI, voiceAPI, musicAPI, exportAPI } from '../services/api';
+import { aiDirectorAPI, videoAPI, voiceAPI, musicAPI, exportAPI, uploadAPI } from '../services/api';
 import toast from 'react-hot-toast';
 import {
   Wand2, Upload, Film, Mic2, Music, Download,
@@ -76,6 +76,8 @@ export default function StudioPage() {
 
   // Image
   const [imagePreview, setImagePreview] = useState(null);
+  const [imageUploadUrl, setImageUploadUrl] = useState(null); // server URL for Replicate
+  const [imageUploading, setImageUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef(null);
 
@@ -139,7 +141,7 @@ export default function StudioPage() {
           toast.error('Generation failed: ' + (data.error || 'unknown error'));
         }
       } catch {}
-    }, 2000);
+    }, 5000);
     return () => clearInterval(interval);
   }, [generationJob?.id, generationJob?.status]);
 
@@ -170,13 +172,29 @@ export default function StudioPage() {
   };
 
   // ─── Image drag/drop ──────────────────────────────────────────────────────
-  const onDrop = useCallback((e) => {
+  const onDrop = useCallback(async (e) => {
     e.preventDefault();
     setIsDragging(false);
     const file = e.dataTransfer?.files?.[0] || e.target.files?.[0];
     if (!file) return;
     if (!file.type.startsWith('image/')) return toast.error('Please upload an image file');
+
+    // Show local preview immediately so the user isn't waiting
     setImagePreview(URL.createObjectURL(file));
+    setImageUploading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('image', file);
+      const { data } = await uploadAPI.image(formData);
+      setImageUploadUrl(data.url); // server URL usable by Replicate
+    } catch {
+      // Non-fatal — video generation will run without the reference image
+      toast('Image saved locally. Server upload failed — video may ignore your image.', { icon: '⚠️' });
+    } finally {
+      setImageUploading(false);
+    }
+
     markComplete('image');
     setActiveStep('director');
     toast.success('Image uploaded!');
@@ -207,7 +225,7 @@ export default function StudioPage() {
     try {
       const { data } = await videoAPI.generate({
         prompt: enhancedPrompt || rawPrompt,
-        imageUrl: imagePreview,
+        imageUrl: imageUploadUrl || imagePreview, // prefer server URL; blob as fallback
         aspectRatio, duration, model: selectedModel, style,
       });
       setGenerationJob({ id: data.jobId, status: 'queued', progress: 0, model: data.model });
@@ -494,7 +512,19 @@ export default function StudioPage() {
                 {imagePreview ? (
                   <div className="relative">
                     <img src={imagePreview} alt="Uploaded" className="w-full rounded-xl max-h-80 object-cover" />
-                    <button onClick={() => { setImagePreview(null); setVideoResult(null); setGenerationJob(null); }}
+                    {imageUploading && (
+                      <div className="absolute inset-0 rounded-xl flex items-center justify-center"
+                        style={{ background: 'rgba(0,0,0,0.45)' }}>
+                        <Loader2 size={28} className="animate-spin" style={{ color: 'var(--gold)' }} />
+                      </div>
+                    )}
+                    {imageUploadUrl && !imageUploading && (
+                      <div className="absolute top-3 left-3 px-2 py-1 rounded-lg text-xs font-semibold flex items-center gap-1"
+                        style={{ background: 'rgba(34,197,94,0.85)', color: '#fff' }}>
+                        <Check size={10} /> Ready for Replicate
+                      </div>
+                    )}
+                    <button onClick={() => { setImagePreview(null); setImageUploadUrl(null); setVideoResult(null); setGenerationJob(null); }}
                       className="absolute top-3 right-3 w-8 h-8 rounded-full flex items-center justify-center"
                       style={{ background: 'rgba(0,0,0,0.7)' }}>
                       <X size={14} />

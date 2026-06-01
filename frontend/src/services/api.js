@@ -87,6 +87,14 @@ export const exportAPI = {
   render: (data) => api.post('/export/render', data),
 };
 
+// ─── Upload ───────────────────────────────────────────────────────────────────
+export const uploadAPI = {
+  image: (formData) => api.post('/upload/image', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 30000,
+  }),
+};
+
 // ─── Analytics ────────────────────────────────────────────────────────────────
 export const analyticsAPI = {
   overview: () => api.get('/analytics/overview'),
