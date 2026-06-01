@@ -61,6 +61,9 @@ export const voiceAPI = {
   generate: (data) => api.post('/voice/generate', data),
   dub: (data) => api.post('/voice/dub', data),
   clone: (data) => api.post('/voice/clone', data),
+  cloneWithFile: (formData) => api.post('/voice/clone', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  }),
 };
 
 // ─── Music ────────────────────────────────────────────────────────────────────

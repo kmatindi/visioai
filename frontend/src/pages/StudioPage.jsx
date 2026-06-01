@@ -5,7 +5,7 @@ import toast from 'react-hot-toast';
 import {
   Wand2, Upload, Film, Mic2, Music, Download,
   ChevronRight, Loader2, Check, Play, Pause, RefreshCw,
-  Sparkles, Globe, Zap, Image, X, Layers, AlertCircle
+  Sparkles, Globe, Zap, Image, X, Layers, AlertCircle, UserPlus
 } from 'lucide-react';
 
 const STEPS = [
@@ -100,6 +100,14 @@ export default function StudioPage() {
   const [generatingVoice, setGeneratingVoice] = useState(false);
   const [voiceResult, setVoiceResult] = useState(null);
   const [voicePreviewPlaying, setVoicePreviewPlaying] = useState(false);
+  // Custom voice cloning
+  const [voiceMode, setVoiceMode] = useState('preset'); // 'preset' | 'custom'
+  const [customVoiceName, setCustomVoiceName] = useState('');
+  const [customVoiceFile, setCustomVoiceFile] = useState(null);
+  const [customVoiceDragging, setCustomVoiceDragging] = useState(false);
+  const [cloningVoice, setCloningVoice] = useState(false);
+  const [clonedVoice, setClonedVoice] = useState(null); // { voiceId, name, mockMode }
+  const customVoiceInputRef = useRef(null);
 
   // Music
   const [selectedMood, setSelectedMood] = useState('cinematic');
@@ -243,6 +251,37 @@ export default function StudioPage() {
     } finally {
       setGeneratingVoice(false);
     }
+  };
+
+  // ─── Custom voice clone ───────────────────────────────────────────────────
+  const handleCloneVoice = async () => {
+    if (!customVoiceName.trim()) return toast.error('Enter a name for your voice');
+    if (!customVoiceFile) return toast.error('Upload an audio sample first');
+    setCloningVoice(true);
+    try {
+      const formData = new FormData();
+      formData.append('name', customVoiceName.trim());
+      formData.append('file', customVoiceFile);
+      const { data } = await voiceAPI.cloneWithFile(formData);
+      setClonedVoice({ voiceId: data.voiceId, name: data.name, mockMode: data.mockMode });
+      setSelectedVoice(data.voiceId);
+      toast.success(`Voice "${data.name}" ${data.mockMode ? 'registered (mock)' : 'cloned!'}`);
+    } catch (err) {
+      toast.error(err.response?.data?.error || 'Voice cloning failed');
+    } finally {
+      setCloningVoice(false);
+    }
+  };
+
+  const onCustomVoiceDrop = (e) => {
+    e.preventDefault();
+    setCustomVoiceDragging(false);
+    const file = e.dataTransfer?.files?.[0] || e.target.files?.[0];
+    if (!file) return;
+    const ok = ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/mp4', 'audio/m4a', 'audio/webm', 'audio/ogg'].includes(file.type)
+      || file.name.match(/\.(mp3|wav|m4a|webm|ogg|flac)$/i);
+    if (!ok) return toast.error('Upload an audio file (mp3, wav, m4a…)');
+    setCustomVoiceFile(file);
   };
 
   // ─── Music generate ───────────────────────────────────────────────────────
@@ -394,6 +433,10 @@ export default function StudioPage() {
   };
 
   const previewAspect = { '9:16': '9/16', '16:9': '16/9', '1:1': '1/1' }[aspectRatio];
+
+  const selectedVoiceName = clonedVoice?.voiceId === selectedVoice
+    ? clonedVoice.name
+    : VOICE_IDS.find(v => v.id === selectedVoice)?.name || 'Unknown';
 
   // ─── Composition status helpers ───────────────────────────────────────────
   const layers = [
@@ -678,8 +721,26 @@ export default function StudioPage() {
                   </div>
                 )}
 
+                {/* Mode tabs */}
+                <div className="flex gap-1 mb-4 p-1 rounded-xl" style={{ background: 'var(--bg-elevated)' }}>
+                  {[
+                    { id: 'preset', label: 'Preset Voices', icon: Mic2 },
+                    { id: 'custom', label: 'Custom Voice', icon: UserPlus },
+                  ].map(({ id, label, icon: Icon }) => (
+                    <button key={id} onClick={() => setVoiceMode(id)}
+                      className="flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-xs font-semibold transition-all"
+                      style={voiceMode === id
+                        ? { background: 'linear-gradient(135deg, #818CF8, #6366F1)', color: '#fff' }
+                        : { color: 'var(--text-muted)' }}>
+                      <Icon size={12} /> {label}
+                      {id === 'custom' && clonedVoice && <Check size={10} />}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Script textarea — shown in both modes */}
                 <p className="text-sm mb-3" style={{ color: 'var(--text-secondary)' }}>
-                  Write a script (auto-suggested from your prompt) and choose a voice character.
+                  {voiceMode === 'preset' ? 'Write a script and choose a voice character.' : 'Write a script and use your cloned voice.'}
                 </p>
 
                 <textarea
@@ -696,36 +757,134 @@ export default function StudioPage() {
                   </p>
                 )}
 
-                <label className="text-xs font-semibold uppercase tracking-wider mb-2 block" style={{ color: 'var(--text-muted)' }}>Voice Character</label>
-                <div className="grid grid-cols-3 gap-2 mb-4">
-                  {VOICE_IDS.map(v => (
-                    <button key={v.id} onClick={() => setSelectedVoice(v.id)}
-                      className="p-2.5 rounded-xl text-left transition-all"
-                      style={selectedVoice === v.id
-                        ? { border: '1px solid #818CF8', background: 'rgba(129,140,248,0.08)' }
-                        : { border: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
-                      <p className="text-sm font-semibold">{v.name}</p>
-                      <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{v.style}</p>
-                    </button>
-                  ))}
-                </div>
+                {/* ── PRESET mode ── */}
+                {voiceMode === 'preset' && (
+                  <>
+                    <label className="text-xs font-semibold uppercase tracking-wider mb-2 block" style={{ color: 'var(--text-muted)' }}>Voice Character</label>
+                    <div className="grid grid-cols-3 gap-2 mb-4">
+                      {VOICE_IDS.map(v => (
+                        <button key={v.id} onClick={() => setSelectedVoice(v.id)}
+                          className="p-2.5 rounded-xl text-left transition-all"
+                          style={selectedVoice === v.id
+                            ? { border: '1px solid #818CF8', background: 'rgba(129,140,248,0.08)' }
+                            : { border: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
+                          <p className="text-sm font-semibold">{v.name}</p>
+                          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{v.style}</p>
+                        </button>
+                      ))}
+                    </div>
 
-                <div className="flex items-center gap-2 mb-4">
-                  <Globe size={14} style={{ color: '#818CF8' }} />
-                  <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Language</label>
-                  <select value={voiceLanguage} onChange={e => setVoiceLanguage(e.target.value)}
-                    className="flex-1 py-1.5 px-3 rounded-lg text-xs outline-none"
-                    style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
-                    {[
-                      ['en','English'],['es','Spanish'],['fr','French'],['de','German'],
-                      ['ja','Japanese'],['ko','Korean'],['zh','Chinese'],['ar','Arabic'],
-                      ['hi','Hindi'],['pt','Portuguese'],
-                    ].map(([code, name]) => (
-                      <option key={code} value={code}>{name}</option>
-                    ))}
-                  </select>
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>+40 more</span>
-                </div>
+                    <div className="flex items-center gap-2 mb-4">
+                      <Globe size={14} style={{ color: '#818CF8' }} />
+                      <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>Language</label>
+                      <select value={voiceLanguage} onChange={e => setVoiceLanguage(e.target.value)}
+                        className="flex-1 py-1.5 px-3 rounded-lg text-xs outline-none"
+                        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}>
+                        {[
+                          ['en','English'],['es','Spanish'],['fr','French'],['de','German'],
+                          ['ja','Japanese'],['ko','Korean'],['zh','Chinese'],['ar','Arabic'],
+                          ['hi','Hindi'],['pt','Portuguese'],
+                        ].map(([code, name]) => (
+                          <option key={code} value={code}>{name}</option>
+                        ))}
+                      </select>
+                      <span className="text-xs" style={{ color: 'var(--text-muted)' }}>+40 more</span>
+                    </div>
+                  </>
+                )}
+
+                {/* ── CUSTOM mode ── */}
+                {voiceMode === 'custom' && (
+                  <div className="mb-4 space-y-3">
+                    {clonedVoice ? (
+                      /* Already cloned — show summary */
+                      <div className="p-4 rounded-xl flex items-center gap-3"
+                        style={{ background: 'rgba(129,140,248,0.08)', border: '1px solid rgba(129,140,248,0.3)' }}>
+                        <div className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0"
+                          style={{ background: 'linear-gradient(135deg, #818CF8, #6366F1)' }}>
+                          <UserPlus size={14} style={{ color: '#fff' }} />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold truncate">{clonedVoice.name}</p>
+                          <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                            {clonedVoice.mockMode ? 'Registered (mock mode)' : 'Cloned via ElevenLabs'}
+                          </p>
+                        </div>
+                        <Check size={16} style={{ color: '#22C55E' }} />
+                        <button onClick={() => { setClonedVoice(null); setCustomVoiceFile(null); setCustomVoiceName(''); setSelectedVoice('voice_aria'); }}
+                          className="w-6 h-6 rounded-full flex items-center justify-center ml-1"
+                          style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)' }}>
+                          <X size={11} />
+                        </button>
+                      </div>
+                    ) : (
+                      /* Clone form */
+                      <>
+                        <div>
+                          <label className="text-xs font-semibold uppercase tracking-wider mb-1.5 block" style={{ color: 'var(--text-muted)' }}>Voice Name</label>
+                          <input
+                            type="text"
+                            value={customVoiceName}
+                            onChange={e => setCustomVoiceName(e.target.value)}
+                            placeholder="e.g. My Voice, Brand Narrator…"
+                            className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                            style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)', color: 'var(--text-primary)' }}
+                            onFocus={e => e.target.style.borderColor = '#818CF8'}
+                            onBlur={e => e.target.style.borderColor = 'var(--border)'}
+                          />
+                        </div>
+
+                        <div>
+                          <label className="text-xs font-semibold uppercase tracking-wider mb-1.5 block" style={{ color: 'var(--text-muted)' }}>Voice Sample</label>
+                          {customVoiceFile ? (
+                            <div className="p-3 rounded-xl flex items-center gap-3"
+                              style={{ background: 'rgba(129,140,248,0.06)', border: '1px solid rgba(129,140,248,0.25)' }}>
+                              <Mic2 size={14} style={{ color: '#818CF8' }} />
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-semibold truncate">{customVoiceFile.name}</p>
+                                <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                                  {(customVoiceFile.size / (1024 * 1024)).toFixed(2)} MB
+                                </p>
+                              </div>
+                              <button onClick={() => setCustomVoiceFile(null)}
+                                className="w-6 h-6 rounded-full flex items-center justify-center"
+                                style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border)' }}>
+                                <X size={11} />
+                              </button>
+                            </div>
+                          ) : (
+                            <div
+                              className={`rounded-xl p-6 text-center cursor-pointer transition-all ${customVoiceDragging ? 'drag-active' : ''}`}
+                              style={{ border: `2px dashed ${customVoiceDragging ? '#818CF8' : 'var(--border)'}`, background: customVoiceDragging ? 'rgba(129,140,248,0.05)' : 'var(--bg-elevated)' }}
+                              onDragOver={e => { e.preventDefault(); setCustomVoiceDragging(true); }}
+                              onDragLeave={() => setCustomVoiceDragging(false)}
+                              onDrop={onCustomVoiceDrop}
+                              onClick={() => customVoiceInputRef.current?.click()}>
+                              <input ref={customVoiceInputRef} type="file" accept="audio/*,.mp3,.wav,.m4a,.webm,.ogg,.flac" className="hidden" onChange={onCustomVoiceDrop} />
+                              <Upload size={20} className="mx-auto mb-2" style={{ color: '#818CF8' }} />
+                              <p className="text-sm font-semibold mb-0.5">Drop your audio sample</p>
+                              <p className="text-xs" style={{ color: 'var(--text-muted)' }}>MP3, WAV, M4A — 30s to 5min, under 10 MB</p>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="p-3 rounded-xl text-xs" style={{ background: 'rgba(129,140,248,0.06)', border: '1px solid rgba(129,140,248,0.15)', color: 'var(--text-muted)' }}>
+                          <strong style={{ color: '#818CF8' }}>Tips for best results: </strong>
+                          Use a clear recording with no background noise. 1–3 minutes of natural speech works best.
+                        </div>
+
+                        <button onClick={handleCloneVoice}
+                          disabled={cloningVoice || !customVoiceName.trim() || !customVoiceFile}
+                          className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
+                          style={{ background: 'linear-gradient(135deg, #818CF8, #6366F1)', color: '#fff' }}>
+                          {cloningVoice
+                            ? <><Loader2 size={15} className="animate-spin" /> Cloning voice…</>
+                            : <><UserPlus size={15} /> Clone This Voice</>}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
 
                 {voiceResult && (
                   <div className="mb-4 p-4 rounded-xl space-y-3"
@@ -734,7 +893,7 @@ export default function StudioPage() {
                       <Check size={14} style={{ color: '#22C55E' }} />
                       <span className="text-sm font-semibold" style={{ color: '#22C55E' }}>Voice track ready</span>
                       <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
-                        ~{voiceResult.duration}s · {VOICE_IDS.find(v => v.id === selectedVoice)?.name}
+                        ~{voiceResult.duration}s · {selectedVoiceName}
                       </span>
                     </div>
                     {voiceResult.audioUrl ? (
@@ -766,11 +925,14 @@ export default function StudioPage() {
                   </div>
                 )}
 
-                <button onClick={handleVoice} disabled={generatingVoice || !voiceText.trim()}
+                <button onClick={handleVoice} disabled={generatingVoice || !voiceText.trim() || (voiceMode === 'custom' && !clonedVoice)}
                   className="w-full py-3 rounded-xl font-semibold text-sm flex items-center justify-center gap-2 disabled:opacity-50 transition-all"
                   style={{ background: 'linear-gradient(135deg, #818CF8, #6366F1)', color: '#fff' }}>
                   {generatingVoice ? <><Loader2 size={15} className="animate-spin" /> Generating…</> : <><Mic2 size={15} /> Generate Voice-over</>}
                 </button>
+                {voiceMode === 'custom' && !clonedVoice && (
+                  <p className="text-xs text-center mt-1" style={{ color: 'var(--text-muted)' }}>Clone a voice above first</p>
+                )}
 
                 {voiceResult && (
                   <button onClick={goToMusic}
@@ -1084,7 +1246,7 @@ export default function StudioPage() {
                       <p className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>
                         {result
                           ? id === 'video'   ? `${result.model || selectedModel} · ${duration}s`
-                          : id === 'voice'   ? `${VOICE_IDS.find(v => v.id === selectedVoice)?.name} · ~${result.duration}s`
+                          : id === 'voice'   ? `${selectedVoiceName} · ~${result.duration}s`
                           : `${result.mood} · ${result.duration}s`
                           : 'Not generated yet'}
                       </p>
